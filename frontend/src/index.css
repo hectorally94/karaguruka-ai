@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --c-page: #eef3f4;
+  --c-surface: #ffffff;
+  --c-sunken: #e2eaec;
+  --c-line: #cbd8db;
+  --c-ink: #12262e;
+  --c-muted: #526a73;
+  --c-brand: #0b6470;
+  --c-brand-ink: #ffffff;
+  --c-brand-soft: #d5ebee;
+  --c-urgent: #b3342c;
+  --c-urgent-soft: #f8dfdc;
+  --c-warn: #8f5a07;
+  --c-warn-soft: #f7e8c9;
+  --c-good: #23704a;
+  --c-good-soft: #d8efe2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --c-page: #0e191d;
+    --c-surface: #162429;
+    --c-sunken: #1e3037;
+    --c-line: #2f454d;
+    --c-ink: #e6f0f2;
+    --c-muted: #9db2ba;
+    --c-brand: #5cc0cd;
+    --c-brand-ink: #06262b;
+    --c-brand-soft: #173f47;
+    --c-urgent: #f0938b;
+    --c-urgent-soft: #4a211e;
+    --c-warn: #e8bd6c;
+    --c-warn-soft: #43320f;
+    --c-good: #7fd3a6;
+    --c-good-soft: #17392a;
+  }
+}
+
+@theme {
+  --color-page: var(--c-page);
+  --color-surface: var(--c-surface);
+  --color-sunken: var(--c-sunken);
+  --color-line: var(--c-line);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-brand: var(--c-brand);
+  --color-brand-ink: var(--c-brand-ink);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-urgent: var(--c-urgent);
+  --color-urgent-soft: var(--c-urgent-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-good: var(--c-good);
+  --color-good-soft: var(--c-good-soft);
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+
+body {
+  background: var(--c-page);
+  color: var(--c-ink);
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
