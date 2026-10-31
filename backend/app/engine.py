@@ -64,7 +64,8 @@ def is_skip(text: str) -> bool:
 def transcript_of(conversation_id: str) -> str:
     rows = query("SELECT role, content FROM messages WHERE conversation_id = %s ORDER BY id DESC LIMIT 16", (conversation_id,))
     names = {"user": "Client", "assistant": "Assistant", "agent": "Conseiller"}
-    return "\n".join(f"{names[m['role']]} : {m['content']}" for m in reversed(rows))
+    # One line per message, so a customer cannot fake a line from the agent by typing a line break.
+    return "\n".join(f"{names[m['role']]} : {' '.join(m['content'].split())}" for m in reversed(rows))
 
 
 def create_ticket(conversation_id: str, kind: str, department: str, priority: str, summary: str, contact: str | None = None, data: dict | None = None) -> str:

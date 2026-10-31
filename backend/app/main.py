@@ -11,15 +11,19 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException
 from pydantic import BaseModel, Field
 
 from . import auth, engine, llm, rag
-from .db import one, query
+from .db import one, pool, query
 from .extract import ALLOWED_EXTENSIONS
-from .settings import HANDLE_MINUTES, MAX_UPLOAD_BYTES, VOYAGE_API_KEY
+from .settings import ADMIN_PASSWORD, AGENT_PASSWORD, HANDLE_MINUTES, MAX_UPLOAD_BYTES, VOYAGE_API_KEY
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("karaguruka.api")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    for name, password in (("ADMIN_PASSWORD", ADMIN_PASSWORD), ("AGENT_PASSWORD", AGENT_PASSWORD)):
+        if password and len(password) < 12:
+            raise RuntimeError(f"{name} must be at least 12 characters long.")
     # Processing runs inside this server, so anything still "processing" at startup was interrupted.
     query("UPDATE documents SET status = 'failed', error = 'Traitement interrompu. Remplacez le fichier pour relancer.' WHERE status = 'processing' RETURNING id")
     yield
@@ -34,10 +38,32 @@ class Login(BaseModel):
     password: str = Field(max_length=200)
 
 
+LOGIN_WINDOW_SECONDS = 300
+LOGIN_FAILURES_PER_IP = 5
+# Also applies across all addresses, so rotating addresses does not give unlimited guesses.
+LOGIN_FAILURES_GLOBAL = 50
+_login_failures: dict[str, deque] = defaultdict(deque)
+
+
+def _recent_failures(key: str) -> int:
+    failures = _login_failures[key]
+    now = time.monotonic()
+    while failures and now - failures[0] > LOGIN_WINDOW_SECONDS:
+        failures.popleft()
+    return len(failures)
+
+
 @app.post("/api/login")
-def login(body: Login, response: Response):
+def login(body: Login, request: Request, response: Response):
+    ip = request.client.host if request.client else "unknown"
+    if _recent_failures(ip) >= LOGIN_FAILURES_PER_IP or _recent_failures("*") >= LOGIN_FAILURES_GLOBAL:
+        log.warning("Login blocked after repeated failures from %s", ip)
+        raise HTTPException(429, "Trop de tentatives. Réessayez dans quelques minutes.")
     role = auth.role_for_password(body.password)
     if not role:
+        _login_failures[ip].append(time.monotonic())
+        _login_failures["*"].append(time.monotonic())
+        log.warning("Failed login from %s", ip)
         time.sleep(0.5)
         raise HTTPException(401, "Mot de passe incorrect.")
     auth.set_session(response, role)
@@ -149,12 +175,14 @@ async def upload_document(
 async def replace_document(document_id: UUID, background: BackgroundTasks, file: UploadFile = File(...)):
     data = await _read_upload(file)
     filename = Path(file.filename or "document").name
-    query("DELETE FROM chunks WHERE document_id = %s", (document_id,))
-    doc = one(
-        f"""UPDATE documents SET filename = %s, mime = %s, size_bytes = %s, file = %s, status = 'processing', error = NULL,
-            chunk_count = 0, version = version + 1, updated_at = now() WHERE id = %s RETURNING {DOC_COLUMNS}""",
-        (filename, file.content_type or "application/octet-stream", len(data), data, document_id),
-    )
+    # The new version and the removal of the old passages happen together, so the old text cannot outlive the file.
+    with pool.connection() as conn, conn.transaction():
+        doc = conn.execute(
+            f"""UPDATE documents SET filename = %s, mime = %s, size_bytes = %s, file = %s, status = 'processing', error = NULL,
+                chunk_count = 0, version = version + 1, updated_at = now() WHERE id = %s RETURNING {DOC_COLUMNS}""",
+            (filename, file.content_type or "application/octet-stream", len(data), data, document_id),
+        ).fetchone()
+        conn.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
     if not doc:
         raise HTTPException(404, "Document introuvable.")
     background.add_task(rag.process_document, str(document_id))
@@ -336,15 +364,20 @@ def suggest(ticket_id: UUID):
     conversation_id = str(ticket["conversation_id"])
     transcript = engine.transcript_of(conversation_id)
     last_customer = next((l.removeprefix("Client : ") for l in reversed(transcript.split("\n")) if l.startswith("Client : ")), "")
-    passages = rag.search(f"{ticket['summary']} {last_customer}", ["public", "internal"])
+    search_text = f"{ticket['summary']} {last_customer}"
+    # A suggestion can be sent to the customer in one click, and the conversation it is based on is customer-written.
+    # So it only ever draws on public documents. Internal passages are shown to the agent separately.
+    passages = rag.search(search_text, ["public"])
+    internal = [p for p in rag.search(search_text, ["internal"], 3) if p["coverage"] > 0 or p["similarity"]]
+    references = [{"title": p["title"], "page": p["page"], "content": p["content"][:600]} for p in internal]
     result = llm.suggest_reply(transcript, passages)
     if result:
         used = [p for p in passages if p["id"] in result["passage_ids"]]
-        return {"reply": result["reply"], "sources": rag.to_sources(used), "mode": "claude"}
+        return {"reply": result["reply"], "sources": rag.to_sources(used), "internal_references": references, "mode": "claude"}
     best = passages[0] if passages else None
     if best:
-        return {"reply": rag.extractive_answer(best, f"{ticket['summary']} {last_customer}"), "sources": rag.to_sources([best]), "mode": "extrait"}
-    return {"reply": "", "sources": [], "mode": "extrait"}
+        return {"reply": rag.extractive_answer(best, search_text), "sources": rag.to_sources([best]), "internal_references": references, "mode": "extrait"}
+    return {"reply": "", "sources": [], "internal_references": references, "mode": "extrait"}
 
 
 @app.post("/api/agent/search", dependencies=[Depends(auth.require_staff)])

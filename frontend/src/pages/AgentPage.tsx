@@ -1,6 +1,12 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api, ApiError, type AskResult, INTENT_LABELS, type Source, sourceLabel, type Ticket } from "../api";
 
+type Suggestion = {
+  reply: string;
+  sources: Source[];
+  internal_references: { title: string; page: number | null; content: string }[];
+};
+
 const PRIORITY: Record<string, { label: string; cls: string }> = {
   P1: { label: "P1 Urgent", cls: "bg-urgent-soft text-urgent" },
   P2: { label: "P2 Normal", cls: "bg-warn-soft text-warn" },
@@ -16,7 +22,7 @@ export default function AgentPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [draft, setDraft] = useState("");
-  const [suggestion, setSuggestion] = useState<{ reply: string; sources: Source[] } | null>(null);
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState("");
   const [question, setQuestion] = useState("");
@@ -78,9 +84,9 @@ export default function AgentPage() {
     setSuggesting(true);
     setError("");
     try {
-      const body = await api<{ reply: string; sources: Source[] }>(`/tickets/${selectedId}/suggest`, { method: "POST" });
+      const body = await api<Suggestion>(`/tickets/${selectedId}/suggest`, { method: "POST" });
       setSuggestion(body);
-      if (!body.reply) setError("Aucun document ne permet de proposer une réponse pour ce dossier.");
+      if (!body.reply) setError("Aucun document public ne permet de proposer une réponse pour ce dossier.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "La suggestion a échoué.");
     } finally {
@@ -145,7 +151,7 @@ export default function AgentPage() {
                 </div>
               </div>
               <div className="border-b border-line bg-sunken px-4 py-3 text-sm">
-                <p className="font-semibold">Résumé</p>
+                <p className="font-semibold">Résumé <span className="font-normal text-muted">(généré d'après les propos du client, à vérifier)</span></p>
                 <p className="mt-1">{ticket.summary}</p>
                 {ticket.contact && <p className="mt-1 text-muted">À rappeler au <span className="font-mono">{ticket.contact}</span></p>}
               </div>
@@ -170,6 +176,18 @@ export default function AgentPage() {
                     <div className="mb-3 rounded-md bg-brand-soft p-3 text-sm">
                       <p className="whitespace-pre-line">{suggestion.reply}</p>
                       {suggestion.sources.length > 0 && <p className="mt-1 text-xs text-muted">Source : {suggestion.sources.map(sourceLabel).join(" ; ")}</p>}
+                      <p className="mt-1 text-xs text-muted">Relisez avant d'envoyer : cette suggestion s'appuie sur des propos écrits par le client.</p>
+                    </div>
+                  )}
+                  {!!suggestion?.internal_references.length && (
+                    <div className="mb-3 rounded-md bg-warn-soft p-3 text-sm">
+                      <p className="font-semibold text-warn">Interne : ne pas communiquer au client</p>
+                      {suggestion.internal_references.map((r) => (
+                        <div key={`${r.title}-${r.content.slice(0, 20)}`} className="mt-2">
+                          <p className="font-medium">{r.title}{r.page ? `, page ${r.page}` : ""}</p>
+                          <p className="whitespace-pre-line">{r.content}</p>
+                        </div>
+                      ))}
                     </div>
                   )}
                   <form onSubmit={(e) => void sendReply(e)} className="flex gap-2">

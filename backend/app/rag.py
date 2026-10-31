@@ -31,7 +31,7 @@ def _embed(texts: list[str], input_type: str) -> list[list[float]] | None:
 
 def process_document(document_id: str) -> None:
     """Extracts and indexes a stored document. Indexing replaces the document's passages in one transaction."""
-    doc = one("SELECT filename, title, file FROM documents WHERE id = %s", (document_id,))
+    doc = one("SELECT filename, title, file, version FROM documents WHERE id = %s", (document_id,))
     if not doc:
         return
     try:
@@ -45,6 +45,11 @@ def process_document(document_id: str) -> None:
         except Exception:
             log.exception("Embedding failed, keyword search only")
         with pool.connection() as conn, conn.transaction():
+            # If the file was replaced or deleted while this one was processed, its text must not be indexed.
+            current = conn.execute("SELECT version FROM documents WHERE id = %s FOR UPDATE", (document_id,)).fetchone()
+            if not current or current["version"] != doc["version"]:
+                log.info("Skipping outdated version %s of document %s", doc["version"], document_id)
+                return
             conn.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
             for i, (page, content) in enumerate(pieces):
                 conn.execute(
@@ -58,7 +63,7 @@ def process_document(document_id: str) -> None:
             )
     except Exception as error:
         log.exception("Processing failed for document %s", document_id)
-        query("UPDATE documents SET status = 'failed', error = %s, updated_at = now() WHERE id = %s RETURNING id", (str(error)[:500], document_id))
+        query("UPDATE documents SET status = 'failed', error = %s, updated_at = now() WHERE id = %s AND version = %s RETURNING id", (str(error)[:500], document_id, doc["version"]))
 
 
 STOPWORDS = set(
