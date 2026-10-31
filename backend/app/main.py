@@ -1,5 +1,6 @@
 import ipaddress
 import logging
+import threading
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -41,10 +42,12 @@ class Login(BaseModel):
 
 LOGIN_WINDOW_SECONDS = 300
 LOGIN_FAILURES_PER_IP = 5
-# Past this many failures across all addresses, each failed guess is slowed down and an alert is logged.
-# A correct password still works, so an attacker cannot lock staff out by failing on purpose.
+# Past this many failures across all addresses, password checks run one at a time and a failure holds the
+# slot for 2 seconds. That caps guessing at about 30 per minute from any number of addresses, while a correct
+# password still succeeds as soon as a slot is free, so an attacker cannot lock staff out permanently.
 LOGIN_FAILURES_ALERT = 50
 _login_failures: dict[str, deque] = defaultdict(deque)
+_login_slot = threading.Lock()
 
 
 def _login_key(request: Request) -> str:
@@ -54,8 +57,13 @@ def _login_key(request: Request) -> str:
         address = ipaddress.ip_address(host)
     except ValueError:
         return host
+    if address.version == 4:
+        return host
+    # An IPv4 address written in IPv6 form is still one IPv4 client.
+    if address.ipv4_mapped:
+        return str(address.ipv4_mapped)
     # One IPv6 customer usually controls a whole /64, so those addresses count as one.
-    return str(ipaddress.ip_network(f"{host}/64", strict=False)) if address.version == 6 else host
+    return str(ipaddress.ip_network(f"{host}/64", strict=False))
 
 
 def _recent_failures(key: str) -> int:
@@ -72,16 +80,22 @@ def login(body: Login, request: Request, response: Response):
     if _recent_failures(ip) >= LOGIN_FAILURES_PER_IP:
         log.warning("Login blocked after repeated failures from %s", ip)
         raise HTTPException(429, "Trop de tentatives. Réessayez dans quelques minutes.")
-    role = auth.role_for_password(body.password)
-    if not role:
-        _login_failures[ip].append(time.monotonic())
-        _login_failures["*"].append(time.monotonic())
-        log.warning("Failed login from %s", ip)
-        under_attack = _recent_failures("*") >= LOGIN_FAILURES_ALERT
+    under_attack = _recent_failures("*") >= LOGIN_FAILURES_ALERT
+    if under_attack and not _login_slot.acquire(blocking=False):
+        raise HTTPException(429, "Service très sollicité. Réessayez dans quelques secondes.")
+    try:
+        role = auth.role_for_password(body.password)
+        if not role:
+            _login_failures[ip].append(time.monotonic())
+            _login_failures["*"].append(time.monotonic())
+            log.warning("Failed login from %s", ip)
+            if under_attack:
+                log.error("Possible password guessing: %s failed logins in %s seconds", _recent_failures("*"), LOGIN_WINDOW_SECONDS)
+            time.sleep(2 if under_attack else 0.5)
+            raise HTTPException(401, "Mot de passe incorrect.")
+    finally:
         if under_attack:
-            log.error("Possible password guessing: %s failed logins in %s seconds", _recent_failures("*"), LOGIN_WINDOW_SECONDS)
-        time.sleep(2 if under_attack else 0.5)
-        raise HTTPException(401, "Mot de passe incorrect.")
+            _login_slot.release()
     auth.set_session(response, role)
     return {"role": role}
 

@@ -85,6 +85,40 @@ def test_failures_elsewhere_cannot_lock_out_staff(client):
         main._login_failures.clear()
 
 
+def test_guessing_rate_is_bounded_during_an_attack(client):
+    main._login_failures.clear()
+    try:
+        now = main.time.monotonic()
+        main._login_failures["*"].extend([now] * main.LOGIN_FAILURES_ALERT)
+        # While another check holds the slot, further guesses are refused without checking the password.
+        with main._login_slot:
+            assert client.post("/api/login", json={"password": ADMIN_PASSWORD}).status_code == 429
+        # Once the slot is free, a correct password works again.
+        assert client.post("/api/login", json={"password": ADMIN_PASSWORD}).status_code == 200
+    finally:
+        main._login_failures.clear()
+
+
+@pytest.mark.parametrize(
+    "host,key",
+    [
+        ("203.0.113.9", "203.0.113.9"),
+        ("::ffff:203.0.113.9", "203.0.113.9"),
+        ("::ffff:198.51.100.7", "198.51.100.7"),
+        ("2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"),
+        ("2001:db8:1:2:bbbb::2", "2001:db8:1:2::/64"),
+    ],
+)
+def test_login_limit_key(host, key):
+    class Peer:
+        pass
+
+    request = Peer()
+    request.client = Peer()
+    request.client.host = host
+    assert main._login_key(request) == key
+
+
 def test_suggestions_never_use_internal_documents(client):
     conversation_id, _ = new_chat(client, "Je voudrais parler à un conseiller")
     say(client, conversation_id, "Quelles vérifications avant une opposition de carte, et quel est le code interne de la cellule fraude ?")
