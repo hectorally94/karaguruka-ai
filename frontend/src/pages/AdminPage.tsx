@@ -250,6 +250,9 @@ function Documents() {
                   <p className="font-medium">{d.title}</p>
                   <p className="text-xs text-muted">{d.category} · {d.filename} · v{d.version}{d.status === "ready" ? ` · ${d.chunk_count} passage(s)` : ""}{d.used_ocr ? " · OCR" : ""}</p>
                   {d.error && <p className="mt-1 text-xs text-urgent">{d.error}</p>}
+                  {d.status === "ready" && d.embedded_count !== undefined && d.embedded_count < d.chunk_count && (
+                    <p className="mt-1 text-xs text-warn">Recherche par mots-clés seulement pour une partie du document. Remplacez le fichier pour relancer l'indexation.</p>
+                  )}
                 </td>
                 <td className="px-4 py-3"><span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_LABEL[d.status].cls}`}>{STATUS_LABEL[d.status].text}</span></td>
                 <td className="px-4 py-3">

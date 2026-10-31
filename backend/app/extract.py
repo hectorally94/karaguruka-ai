@@ -1,11 +1,15 @@
 import io
+import logging
 import re
 import subprocess
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from .settings import OCR_LANGUAGES
+
+log = logging.getLogger("karaguruka.extract")
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".txt", ".md", ".png", ".jpg", ".jpeg"}
 CHUNK_SIZE = 1200
@@ -34,11 +38,30 @@ def _ocr_pdf(data: bytes) -> Extracted:
         return Extracted([(i + 1, _ocr_image(image)) for i, image in enumerate(images)], len(images), True)
 
 
-def _extract_pdf(data: bytes) -> Extracted:
-    from pypdf import PdfReader
+def _pdf_pages(data: bytes) -> list[str]:
+    """Reads a PDF with its layout, so a table's labels stay on the same line as their values."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="karaguruka-pdf-") as tmp:
+            pdf = Path(tmp) / "input.pdf"
+            pdf.write_bytes(data)
+            result = subprocess.run(["pdftotext", "-layout", "-enc", "UTF-8", str(pdf), "-"], capture_output=True, text=True, timeout=120, check=True)
+        pages = result.stdout.split("\f")
+        if pages and not pages[-1].strip():
+            pages.pop()
+        # Wide gaps are table columns. Marking them keeps the columns readable once the spacing is gone.
+        return [
+            "\n".join(re.sub(r"\s{3,}", " | ", line.strip()) for line in unicodedata.normalize("NFKC", page).splitlines())
+            for page in pages
+        ]
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        from pypdf import PdfReader
 
-    reader = PdfReader(io.BytesIO(data))
-    texts = [page.extract_text() or "" for page in reader.pages]
+        log.warning("pdftotext could not read this PDF. Tables may lose their layout.")
+        return [page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages]
+
+
+def _extract_pdf(data: bytes) -> Extracted:
+    texts = _pdf_pages(data)
     # A page with almost no selectable text is a scan.
     if len(re.sub(r"\s", "", "".join(texts))) < 40 * max(len(texts), 1):
         return _ocr_pdf(data)

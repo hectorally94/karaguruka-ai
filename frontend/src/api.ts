@@ -54,6 +54,7 @@ export type DocumentRow = {
   version: number;
   page_count: number | null;
   chunk_count: number;
+  embedded_count?: number;
   used_ocr: boolean;
   updated_at: string;
 };

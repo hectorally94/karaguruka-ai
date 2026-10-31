@@ -6,3 +6,6 @@ dist
 .env
 *.tsbuildinfo
 .DS_Store
+
+# Client profiles hold real client data and test documents, never published
+backend/profiles/

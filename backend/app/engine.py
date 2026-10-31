@@ -9,7 +9,7 @@ from .intents import classify, detect_sentiment, normalize
 from .llm import answer_customer, summarize
 from .privacy import mask_sensitive
 from .rag import extractive_answer, is_confident, search, to_sources
-from .settings import BANK_NAME, CARD_HOTLINE, CREDIT_PRODUCTS
+from .settings import BANK_NAME, CREDIT_PRODUCTS, CURRENCY, RATE_LABEL, URGENT_CONTACT
 
 MENU = ["Carte bloquée", "Ouvrir un compte", "Informations crédit", "Faire une réclamation", "Horaires des agences", "Parler à un agent"]
 CREDIT_CHIPS = [p["label"] for p in CREDIT_PRODUCTS.values()]
@@ -28,8 +28,9 @@ class Step:
 
 
 def money(value: float) -> str:
-    text = f"{value:,.2f}".replace(",", " ").replace(".", ",")
-    return f"{text.removesuffix(',00')} €"
+    # Currencies with no cents in everyday use, such as the Burundian franc, are rounded to whole units.
+    text = f"{value:,.2f}".replace(",", " ").replace(".", ",") if CURRENCY == "€" else f"{round(value):,}".replace(",", " ")
+    return f"{text.removesuffix(',00')} {CURRENCY}"
 
 
 def monthly_payment(amount: float, annual_rate_pct: float, months: int) -> float:
@@ -38,11 +39,22 @@ def monthly_payment(amount: float, annual_rate_pct: float, months: int) -> float
 
 
 def parse_amount(text: str) -> float | None:
-    match = re.search(r"(\d[\d\s.]*)(?:\s*(k|mille))?", normalize(text))
+    match = re.search(r"(\d[\d\s.]*)(?:\s*(k|mille|millions?))?", normalize(text))
     if not match:
         return None
     digits = re.sub(r"[\s.]", "", match.group(1))
-    return float(digits) * (1000 if match.group(2) else 1) if digits else None
+    if not digits:
+        return None
+    unit = match.group(2) or ""
+    return float(digits) * (1_000_000 if unit.startswith("million") else 1000 if unit else 1)
+
+
+def find_credit_product(normalized_text: str) -> str | None:
+    for key, product in CREDIT_PRODUCTS.items():
+        keywords = product.get("keywords") or [normalize(product["label"]).split()[-1]]
+        if any(word in normalized_text for word in keywords):
+            return key
+    return None
 
 
 def parse_months(text: str) -> int | None:
@@ -107,7 +119,7 @@ def start_flow(route: str) -> Step:
 
 def urgent_card(reason: str) -> Step:
     return Step(
-        f"C'est une urgence, je vous mets en priorité. Si vous ne pouvez pas attendre, le service d'opposition est joignable 24h/24 au {CARD_HOTLINE}. Pour aider le conseiller, donnez-moi uniquement les 4 derniers chiffres de la carte, ou répondez « je ne sais pas ».",
+        f"C'est une urgence, je vous mets en priorité. Si vous ne pouvez pas attendre, {URGENT_CONTACT}. Pour aider le conseiller, si une carte est concernée, donnez-moi uniquement ses 4 derniers chiffres. Sinon, répondez « je ne sais pas ».",
         "fraude" if reason == "fraud" else "carte_perdue",
         ["Je ne sais pas"],
         {"type": "card_last4", "reason": reason},
@@ -158,7 +170,7 @@ def advance_flow(conversation_id: str, flow: dict, text: str, sentiment: str) ->
         return Step(f"Votre réclamation est enregistrée sous la référence {ref}. Le service Réclamations va la traiter. Puis-je vous aider sur autre chose ?", "reclamation", MENU, ticket_ref=ref)
 
     if kind == "credit_product":
-        product = "immo" if "immo" in n else "auto" if re.search(r"auto|voiture", n) else "conso" if re.search(r"conso|personnel", n) else None
+        product = find_credit_product(n)
         if not product:
             return Step("Choisissez un type de crédit.", "credit", CREDIT_CHIPS, flow)
         p = CREDIT_PRODUCTS[product]
@@ -179,7 +191,7 @@ def advance_flow(conversation_id: str, flow: dict, text: str, sentiment: str) ->
         monthly = monthly_payment(flow["amount"], p["rate"], months)
         interest = monthly * months - flow["amount"]
         return Step(
-            f"Estimation pour un {p['label'].lower()} de {money(flow['amount'])} sur {months} mois, au taux indicatif de {str(p['rate']).replace('.', ',')} % : environ {money(monthly)} par mois, soit {money(interest)} d'intérêts. Cette estimation n'est pas une offre de prêt. Voulez-vous qu'un conseiller vous rappelle ?",
+            f"Estimation pour un {p['label'].lower()} de {money(flow['amount'])} sur {months} mois, au taux {RATE_LABEL} de {str(p['rate']).replace('.', ',')} % : environ {money(monthly)} par mois, soit {money(interest)} d'intérêts. Cette estimation n'est pas une offre de prêt. Voulez-vous qu'un conseiller vous rappelle ?",
             "credit",
             ["Être rappelé", "Non merci"],
             {"type": "credit_followup", "product": flow["product"], "amount": flow["amount"], "months": months, "monthly": monthly},

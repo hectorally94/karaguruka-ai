@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import time
 from collections import defaultdict, deque
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from . import auth, engine, llm, rag
 from .db import one, pool, query
 from .extract import ALLOWED_EXTENSIONS
-from .settings import ADMIN_PASSWORD, AGENT_PASSWORD, HANDLE_MINUTES, MAX_UPLOAD_BYTES, VOYAGE_API_KEY
+from .settings import ADMIN_PASSWORD, AGENT_PASSWORD, BANK_NAME, BANK_NOTICE, HANDLE_MINUTES, MAX_UPLOAD_BYTES, VOYAGE_API_KEY
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("karaguruka.api")
@@ -40,9 +41,21 @@ class Login(BaseModel):
 
 LOGIN_WINDOW_SECONDS = 300
 LOGIN_FAILURES_PER_IP = 5
-# Also applies across all addresses, so rotating addresses does not give unlimited guesses.
-LOGIN_FAILURES_GLOBAL = 50
+# Past this many failures across all addresses, each failed guess is slowed down and an alert is logged.
+# A correct password still works, so an attacker cannot lock staff out by failing on purpose.
+LOGIN_FAILURES_ALERT = 50
 _login_failures: dict[str, deque] = defaultdict(deque)
+
+
+def _login_key(request: Request) -> str:
+    # request.client is the direct peer. Behind a proxy, configure uvicorn's trusted proxies so this is the real client.
+    host = request.client.host if request.client else "unknown"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    # One IPv6 customer usually controls a whole /64, so those addresses count as one.
+    return str(ipaddress.ip_network(f"{host}/64", strict=False)) if address.version == 6 else host
 
 
 def _recent_failures(key: str) -> int:
@@ -55,8 +68,8 @@ def _recent_failures(key: str) -> int:
 
 @app.post("/api/login")
 def login(body: Login, request: Request, response: Response):
-    ip = request.client.host if request.client else "unknown"
-    if _recent_failures(ip) >= LOGIN_FAILURES_PER_IP or _recent_failures("*") >= LOGIN_FAILURES_GLOBAL:
+    ip = _login_key(request)
+    if _recent_failures(ip) >= LOGIN_FAILURES_PER_IP:
         log.warning("Login blocked after repeated failures from %s", ip)
         raise HTTPException(429, "Trop de tentatives. Réessayez dans quelques minutes.")
     role = auth.role_for_password(body.password)
@@ -64,7 +77,10 @@ def login(body: Login, request: Request, response: Response):
         _login_failures[ip].append(time.monotonic())
         _login_failures["*"].append(time.monotonic())
         log.warning("Failed login from %s", ip)
-        time.sleep(0.5)
+        under_attack = _recent_failures("*") >= LOGIN_FAILURES_ALERT
+        if under_attack:
+            log.error("Possible password guessing: %s failed logins in %s seconds", _recent_failures("*"), LOGIN_WINDOW_SECONDS)
+        time.sleep(2 if under_attack else 0.5)
         raise HTTPException(401, "Mot de passe incorrect.")
     auth.set_session(response, role)
     return {"role": role}
@@ -83,7 +99,7 @@ def me(role: str | None = Depends(auth.read_role)):
 
 @app.get("/api/status")
 def status():
-    return {"claude": llm.has_claude(), "semantic_search": bool(VOYAGE_API_KEY)}
+    return {"claude": llm.has_claude(), "semantic_search": bool(VOYAGE_API_KEY), "bank_name": BANK_NAME, "notice": BANK_NOTICE}
 
 
 # --- Customer assistant -----------------------------------------------------
@@ -147,7 +163,10 @@ async def _read_upload(file: UploadFile) -> bytes:
 
 @app.get("/api/documents", dependencies=[Depends(auth.require_admin)])
 def list_documents():
-    return query(f"SELECT {DOC_COLUMNS} FROM documents ORDER BY uploaded_at DESC")
+    return query(
+        f"""SELECT {DOC_COLUMNS}, (SELECT count(embedding)::int FROM chunks c WHERE c.document_id = documents.id) AS embedded_count
+            FROM documents ORDER BY uploaded_at DESC"""
+    )
 
 
 @app.post("/api/documents", status_code=201, dependencies=[Depends(auth.require_admin)])
@@ -237,8 +256,17 @@ class Ask(BaseModel):
 
 def _ask_documents(question: str, audiences: list[str]) -> dict:
     passages = rag.search(question, audiences)
-    routed = llm.answer_customer(question, "", passages)
     excerpts = [{"title": p["title"], "page": p["page"], "content": p["content"][:400], "coverage": round(p["coverage"], 2), "similarity": p["similarity"]} for p in passages]
+    # Staff questions go straight to the documents. Only the customer view applies customer routing.
+    if "internal" in audiences:
+        staff_answer = llm.answer_staff(question, passages)
+        if staff_answer:
+            used = [p for p in passages if p["id"] in staff_answer["passage_ids"]]
+            found = bool(staff_answer["answer"].strip())
+            return {"found": found, "route": "answer" if found else "not_found", "answer": staff_answer["answer"], "sources": rag.to_sources(used), "excerpts": excerpts, "mode": "claude"}
+        routed = None
+    else:
+        routed = llm.answer_customer(question, "", passages)
     if routed:
         used = [p for p in passages if p["id"] in routed["passage_ids"]]
         return {"found": routed["route"] == "answer", "route": routed["route"], "answer": routed["answer"], "sources": rag.to_sources(used), "excerpts": excerpts, "mode": "claude"}

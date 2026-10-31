@@ -44,6 +44,9 @@ def new_chat(client, message):
         ("password: secret avec espaces", "avec espaces"),
         ("mon code est 1 2 3 4", "1 2 3 4"),
         ("1234 est mon code", "1234"),
+        ("mot de passe :\nsecret", "secret"),
+        ("password123", "123"),
+        ("my_password=abc", "abc"),
     ],
 )
 def test_secrets_are_masked(raw, hidden):
@@ -68,6 +71,16 @@ def test_login_is_blocked_after_repeated_failures(client):
         assert client.post("/api/login", json={"password": "faux"}).status_code == 429
         # The correct password is refused too while the block lasts, so guessing cannot continue.
         assert client.post("/api/login", json={"password": ADMIN_PASSWORD}).status_code == 429
+    finally:
+        main._login_failures.clear()
+
+
+def test_failures_elsewhere_cannot_lock_out_staff(client):
+    main._login_failures.clear()
+    try:
+        now = main.time.monotonic()
+        main._login_failures["*"].extend([now] * (main.LOGIN_FAILURES_ALERT + 10))
+        assert client.post("/api/login", json={"password": ADMIN_PASSWORD}).status_code == 200
     finally:
         main._login_failures.clear()
 
@@ -126,6 +139,13 @@ def test_outdated_version_is_not_indexed_after_a_replacement(client, monkeypatch
         ("Passez-moi un conseiller", "human"),
         ("Quelles cartes proposez-vous ?", "question"),
         ("Quels sont vos horaires ?", "question"),
+        ("Quelqu'un a pris de l'argent sur mon compte hier et ce n'était pas moi", "fraud"),
+        ("On m'a retiré 50 000 francs à mon insu", "fraud"),
+        ("Je voudrais parler à quelqu'un", "human"),
+        ("Sous quel délai répondez-vous à une réclamation ?", "question"),
+        ("Comment déposer une réclamation ?", "question"),
+        ("Faire une réclamation", "complaint"),
+        ("Quels frais injustifiés, c'est inadmissible !", "complaint"),
     ],
 )
 def test_routes(text, route):

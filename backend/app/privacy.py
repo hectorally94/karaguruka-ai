@@ -12,8 +12,8 @@ def mask_sensitive(raw: str) -> tuple[str, list[str]]:
     text = unicodedata.normalize("NFKC", raw)
     masked: list[str] = []
     rules = [
-        # Everything after the keyword is hidden, because a password can contain spaces.
-        (r"\b(mot de passe|mdp|password|passphrase|passcode)\b[^\n]*", r"\1 [masqué]", "mot de passe", re.I),
+        # Everything after the keyword is hidden, through the next line: a password can contain spaces or follow a line break.
+        (r"(?<![^\W\d_])(mot de passe|mdp|password|passphrase|passcode)[^\n]*(?:\n[^\n]*)?", r"\1 [masqué]", "mot de passe", re.I),
         (r"\b[A-Z]{2}\d{2}(?:[\W_]{0,2}[A-Z0-9]){10,30}\b", "[IBAN masqué]", "IBAN", re.I),
         (r"(?<!\d)(?:\d[\W_]{0,3}){12,18}\d(?!\d)", "[numéro de carte masqué]", "numéro de carte", 0),
         (rf"\b({SECRET_WORD})\b([^\d\n]{{0,20}}){SECRET_DIGITS}", r"\1\2[code masqué]", "code secret", re.I),

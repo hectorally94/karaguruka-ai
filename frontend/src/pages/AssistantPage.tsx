@@ -3,6 +3,7 @@ import { api, ApiError, type ChatReply, INTENT_LABELS, type Source, sourceLabel,
 
 type Bubble = { key: string; role: "user" | "assistant" | "agent"; content: string; sources?: Source[] };
 type Analysis = { intent: string; masked: string[]; sources: Source[]; ticketRef: string | null };
+type Status = { claude: boolean; semantic_search: boolean; bank_name: string; notice: string };
 
 const STORAGE_KEY = "karaguruka_conversation";
 const STARTERS = ["Carte bloquée", "Ouvrir un compte", "Informations crédit", "Faire une réclamation", "Horaires des agences", "Parler à un agent"];
@@ -24,7 +25,7 @@ export default function AssistantPage() {
   const [listening, setListening] = useState(false);
   const [callStart, setCallStart] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [status, setStatus] = useState<{ claude: boolean; semantic_search: boolean } | null>(null);
+  const [status, setStatus] = useState<Status | null>(null);
 
   const seenAgent = useRef(new Set<number>());
   const inCallRef = useRef(false);
@@ -33,7 +34,7 @@ export default function AssistantPage() {
   const sendRef = useRef<(text: string, channel?: "text" | "voice") => Promise<void>>(async () => {});
 
   useEffect(() => {
-    api<{ claude: boolean; semantic_search: boolean }>("/status").then(setStatus).catch(() => {});
+    api<Status>("/status").then(setStatus).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -197,7 +198,7 @@ export default function AssistantPage() {
     <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <section className="flex min-h-[70dvh] min-w-0 flex-col rounded-lg border border-line bg-surface" aria-label="Conversation">
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3">
-          <h1 className="text-lg font-bold">Banque Démo, service clients</h1>
+          <h1 className="text-lg font-bold">{status?.bank_name ?? "Service clients"}</h1>
           {inCall && (
             <span className="rounded-full bg-good-soft px-2.5 py-0.5 font-mono text-xs text-good tabular-nums">
               {listening ? "À l'écoute" : "En ligne"} {clock}
@@ -291,7 +292,7 @@ export default function AssistantPage() {
               {status.semantic_search ? "La recherche sémantique est active." : "La recherche se fait par mots-clés."}
             </p>
           )}
-          <p className="mt-2 text-muted">Banque fictive : toutes les données sont des exemples. Ne saisissez aucune vraie donnée bancaire.</p>
+          {status && <p className="mt-2 text-muted">{status.notice}</p>}
         </div>
       </aside>
     </div>

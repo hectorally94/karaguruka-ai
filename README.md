@@ -52,3 +52,7 @@ They create their own `karaguruka_test` database in the Docker container and nev
 ## Before production
 
 Replace the shared passwords with individual accounts, serve over HTTPS with `SECURE_COOKIES=1`, move document processing to a job queue, and review data retention and banking compliance.
+
+## Client profiles
+
+`BANK_PROFILE` in `.env` points to a JSON file with a client's name, currency, urgent contact, credit products, documents and example conversations. Profiles live in `backend/profiles/`, which git ignores. Without one, the app uses the fictional bank.

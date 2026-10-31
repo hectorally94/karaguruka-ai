@@ -11,9 +11,10 @@ load_dotenv(ROOT / ".env")
 
 main_url = urlsplit(os.environ["DATABASE_URL"])
 os.environ["DATABASE_URL"] = urlunsplit(main_url._replace(path="/karaguruka_test"))
-# The tests check the behavior without paid AI services.
+# The tests check the behavior without paid AI services, using the default fictional bank.
 os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ["VOYAGE_API_KEY"] = ""
+os.environ["BANK_PROFILE"] = ""
 
 with psycopg.connect(urlunsplit(main_url), autocommit=True) as conn:
     conn.execute("DROP DATABASE IF EXISTS karaguruka_test WITH (FORCE)")

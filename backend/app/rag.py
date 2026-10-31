@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 import httpx
 
@@ -16,14 +17,23 @@ VOYAGE_MODEL = "voyage-3.5"
 def _embed(texts: list[str], input_type: str) -> list[list[float]] | None:
     if not VOYAGE_API_KEY:
         return None
+    # Indexing runs in the background and can wait out a rate limit. A customer's search cannot, so it falls back to keywords.
+    attempts = 6 if input_type == "document" else 1
+    timeout = 60 if input_type == "document" else 5
     vectors: list[list[float]] = []
     for start in range(0, len(texts), 64):
-        response = httpx.post(
-            "https://api.voyageai.com/v1/embeddings",
-            headers={"Authorization": f"Bearer {VOYAGE_API_KEY}"},
-            json={"model": VOYAGE_MODEL, "input": texts[start : start + 64], "input_type": input_type, "output_dimension": 1024},
-            timeout=60,
-        )
+        for attempt in range(attempts):
+            response = httpx.post(
+                "https://api.voyageai.com/v1/embeddings",
+                headers={"Authorization": f"Bearer {VOYAGE_API_KEY}"},
+                json={"model": VOYAGE_MODEL, "input": texts[start : start + 64], "input_type": input_type, "output_dimension": 1024},
+                timeout=timeout,
+            )
+            if response.status_code != 429 or attempt == attempts - 1:
+                break
+            log.warning("Voyage AI rate limit reached, waiting before retrying")
+            retry_after = response.headers.get("retry-after", "")
+            time.sleep(float(retry_after) if retry_after.isdigit() else 25)
         response.raise_for_status()
         vectors.extend(item["embedding"] for item in response.json()["data"])
     return vectors
