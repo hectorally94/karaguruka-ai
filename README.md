@@ -4,6 +4,12 @@ AI assistant for bank call centers: a customer assistant (voice and text), guide
 
 Stack: FastAPI, React with Tailwind CSS, PostgreSQL with pgvector in Docker. The bank and all its data are fictional.
 
+## Documentation
+
+- User guides, in French: [customer](docs/guide-client.md), [admin](docs/guide-admin.md), [agent](docs/guide-agent.md)
+- Technical: [how RAG works in this project](docs/how-rag-works.md)
+- Plan: [how to add local models with Ollama](docs/local-models.md), not built yet
+
 ## Run it
 
 Secrets live in `.env`, which git ignores. It holds the database URL, `ADMIN_PASSWORD` and `AGENT_PASSWORD`.
