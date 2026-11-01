@@ -2,13 +2,20 @@
 
 AI assistant for bank call centers: a customer assistant (voice and text), guided flows, handoff to agents, an agent desk, and an admin dashboard where staff upload the documents the assistant answers from (RAG).
 
-Stack: FastAPI, React with Tailwind CSS, PostgreSQL with pgvector in Docker. The bank and all its data are fictional.
+Stack: FastAPI, React with Tailwind CSS, PostgreSQL with pgvector in Docker. By default, the bank and its data are fictional. An optional [demo database](docs/demo-database.md) is an unofficial demonstration based on a real bank's public information, plus invented test documents.
 
 ## Documentation
 
 - User guides, in French: [customer](docs/guide-client.md), [admin](docs/guide-admin.md), [agent](docs/guide-agent.md)
 - Technical: [how RAG works in this project](docs/how-rag-works.md)
+- Testing: [restore the demo database](docs/demo-database.md)
 - Plan: [how to add local models with Ollama](docs/local-models.md), not built yet
+
+## Demo database
+
+To test without loading and indexing documents yourself, [download the demo database](https://github.com/hectorally94/karaguruka-ai/releases/download/demo-db-2026-11-01/karaguruka-demo-db.zip) (1.5 MB) and follow [the restore steps](docs/demo-database.md). It holds 9 documents and 30 indexed passages with their vectors.
+
+It's an unofficial demonstration, not affiliated with or validated by BANCOBU. It combines public information from bancobu.com, read on 2026-10-31 and possibly out of date, with invented documents marked `[TEST]`. Don't rely on it for real banking decisions.
 
 ## Run it
 
